@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Headless one-shot restore of the 'claude' tmux session at login.
+# Mirrors `claude-session` but never attaches (runs from systemd, no terminal).
+# Idempotent: if the session already exists, does nothing — so it never
+# clobbers a session you built by hand (keeps the deliberate no-race design).
+set -uo pipefail
+export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
+
+command -v tmux >/dev/null 2>&1 || exit 0
+tmux has-session -t claude 2>/dev/null && exit 0
+
+tmux new-session -d -s claude
+tmux run-shell "$HOME/.tmux/plugins/tmux-resurrect/scripts/restore.sh"
+sleep 2
+# drop the blank bootstrap window if a real layout was restored
+if [ "$(tmux list-windows -t claude 2>/dev/null | wc -l)" -gt 1 ]; then
+  tmux kill-window -t claude:1 2>/dev/null || true
+fi

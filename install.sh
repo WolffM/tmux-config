@@ -19,7 +19,23 @@ clone tmux-resurrect
 clone tmux-continuum
 echo "plugins installed under $P"
 
-# 3) reload if a server is running
+# 3) session-restore utility: bin scripts + systemd user service
+#    - claude-tmux-session-hook : resurrect post-save hook, rewrites each claude
+#      pane to `claude --resume <sessionId>` so restores skip the picker.
+#    - claude-tmux-boot-restore : headless one-shot restore.
+#    - claude-tmux-restore.service : runs the boot restore at the end of login.
+mkdir -p "$HOME/.local/bin" "$HOME/.config/systemd/user"
+ln -sfn "$here/bin/claude-tmux-session-hook"        "$HOME/.local/bin/claude-tmux-session-hook"
+ln -sfn "$here/bin/claude-tmux-boot-restore"        "$HOME/.local/bin/claude-tmux-boot-restore"
+ln -sfn "$here/systemd/claude-tmux-restore.service" "$HOME/.config/systemd/user/claude-tmux-restore.service"
+echo "linked session-restore utility (bin + systemd unit)"
+if command -v systemctl >/dev/null; then
+  systemctl --user daemon-reload
+  systemctl --user enable claude-tmux-restore.service >/dev/null 2>&1 \
+    && echo "enabled claude-tmux-restore.service (headless restore at login)"
+fi
+
+# 4) reload if a server is running
 if command -v tmux >/dev/null && tmux info >/dev/null 2>&1; then
   tmux source-file "$HOME/.tmux.conf" && echo "reloaded running tmux"
 fi

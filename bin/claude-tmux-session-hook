@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# tmux-resurrect  @resurrect-hook-post-save-layout  hook.
+#
+# Rewrites each claude pane's restore command (field 11 of the resurrect state
+# file) from the bare `claude --resume` (interactive picker) to
+# `claude --resume <sessionId>`, so a restored pane reattaches to the *exact*
+# Claude session it was running — even when several sessions share one repo.
+#
+# The session id is resolved authoritatively from Claude's live running-session
+# registry (~/.claude/sessions/<pid>.json), reached by walking each pane's
+# process subtree to the registered (version-execed) claude pid.
+#
+# Runs BEFORE resurrect's dedup (save.sh:246), so a stable layout still dedups
+# to a single state file — no churn.
+#
+# $1 = path to the just-written resurrect state file.
+set -uo pipefail
+
+state="${1:-}"
+[ -n "$state" ] && [ -f "$state" ] || exit 0
+command -v tmux >/dev/null 2>&1 || exit 0
+
+# pid -> sessionId, from the live session registry
+declare -A REG
+shopt -s nullglob
+for f in "$HOME"/.claude/sessions/*.json; do
+  pid="$(basename "$f" .json)"
+  sid="$(grep -o '"sessionId":"[^"]*"' "$f" 2>/dev/null | head -1 | cut -d'"' -f4)"
+  [ -n "$sid" ] && REG["$pid"]="$sid"
+done
+shopt -u nullglob
+[ ${#REG[@]} -gt 0 ] || exit 0
+
+# session:win.pane -> sessionId, by walking each claude pane's subtree
+_descendants() { local p=$1 c; printf '%s\n' "$p"; for c in $(pgrep -P "$p" 2>/dev/null || true); do _descendants "$c"; done; }
+
+mapfile="$(mktemp)"
+trap 'rm -f "$mapfile"' EXIT
+while IFS='|' read -r pos ppid cmd; do
+  [ "$cmd" = "claude" ] || continue
+  for d in $(_descendants "$ppid"); do
+    if [ -n "${REG[$d]:-}" ]; then
+      # emit  session <tab> win <tab> pane <tab> sid
+      printf '%s\t%s\n' "${pos//[:.]/	}" "${REG[$d]}" >> "$mapfile"
+      break
+    fi
+  done
+done < <(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}|#{pane_pid}|#{pane_current_command}' 2>/dev/null || true)
+
+[ -s "$mapfile" ] || exit 0
+
+# Rewrite field 11 for the claude panes we resolved.
+tmp="$(mktemp)"
+awk -F'\t' -v OFS='\t' '
+  NR==FNR { sid[$1 SUBSEP $2 SUBSEP $3] = $4; next }
+  /^pane/ && $10 == "claude" {
+    k = $2 SUBSEP $3 SUBSEP $6
+    if (k in sid) $11 = ":claude --resume " sid[k]
+  }
+  { print }
+' "$mapfile" "$state" > "$tmp" && cat "$tmp" > "$state"
+rm -f "$tmp"

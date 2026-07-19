@@ -1,0 +1,17 @@
+[Unit]
+Description=Restore the claude tmux session (headless, end of graphical login)
+# Run after the Plasma workspace is up, so this lands at the end of the
+# boot auto-restart sequence.
+After=plasma-workspace.target graphical-session.target
+PartOf=graphical-session.target
+ConditionPathExists=%h/.local/share/tmux/resurrect/last
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# let the desktop autostart burst settle first
+ExecStartPre=/usr/bin/sleep 8
+ExecStart=%h/.local/bin/claude-tmux-boot-restore
+
+[Install]
+WantedBy=plasma-workspace.target

@@ -14,6 +14,28 @@ and reboots; the terminal is the tab manager, not the app.
   every 5 min. Auto-restore is intentionally **off** (it races/clobbers) —
   restore is on-demand instead.
 
+## Claude session restore
+
+A small utility (in `bin/` + `systemd/`) that makes resurrect restore each
+[Claude Code] pane back into its **exact** session — even when several sessions
+share one repo — instead of dropping you at the `--resume` picker.
+
+- **`bin/claude-tmux-session-hook`** — a resurrect `@resurrect-hook-post-save-layout`
+  hook. On every save it resolves each claude pane's real session id from
+  Claude's live registry (`~/.claude/sessions/<pid>.json`, reached by walking the
+  pane's process subtree) and rewrites the saved restore command to
+  `claude --resume <sessionId>`. Runs before resurrect's dedup, so a stable
+  layout still collapses to one state file.
+- **`bin/claude-tmux-boot-restore`** — headless, idempotent one-shot restore
+  (create the `claude` session + restore, no attach). Safe to re-run: if the
+  session already exists it does nothing.
+- **`systemd/claude-tmux-restore.service`** — runs the boot restore after
+  `plasma-workspace.target`, i.e. at the end of graphical login.
+
+`install.sh` symlinks all three into place and enables the service.
+
+[Claude Code]: https://claude.com/claude-code
+
 ## Keymap (all after the `Ctrl-Space` prefix)
 
 | Action | Keys |
