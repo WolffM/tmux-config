@@ -10,6 +10,11 @@ and reboots; the terminal is the tab manager, not the app.
   focus, drag to select (copies straight to the system clipboard via `wl-copy`).
 - **Status bar on top**, dark Tokyo-Night palette, useful window titles
   (`#I: #W`, surfaced to the terminal via `set-titles`).
+- **Tabs are named after their directory**, not the running command — the
+  default `#{pane_current_command}` made every tab read `claude`. A leading
+  `hadoku-` / `hadoku_` is stripped, so `~/repos/hadoku-trader` reads as
+  `trader`. The name follows the pane's cwd, so `cd` renames the tab;
+  renaming by hand (`R`) pins it for good.
 - **Persistence** via [tmux-resurrect] + [tmux-continuum]: layout auto-saved
   every 5 min. Auto-restore is intentionally **off** (it races/clobbers) —
   restore is on-demand instead.
@@ -43,7 +48,9 @@ share one repo — instead of dropping you at the `--resume` picker.
 | New tab | `t` |
 | Next / prev tab | `Tab` / `Shift+Tab` |
 | Go to tab 1–9 | `1`…`9` |
-| Close tab (no confirm) | `Ctrl+w` |
+| Rename tab (pins the name) | `R` |
+| Close pane (last one closes the tab) | `Ctrl+w` |
+| Close whole tab, splits and all | `X` |
 | Split right (beside) | `]` |
 | Split down (stacked) | `[` |
 | Zoom pane fullscreen | `z` |
