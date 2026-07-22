@@ -50,7 +50,6 @@ share one repo — instead of dropping you at the `--resume` picker.
 | Go to tab 1–9 | `1`…`9` |
 | Rename tab (pins the name) | `R` |
 | Close pane (last one closes the tab) | `Ctrl+w` |
-| Close whole tab, splits and all | `X` |
 | Split right (beside) | `]` |
 | Split down (stacked) | `[` |
 | Zoom pane fullscreen | `z` |
@@ -58,6 +57,13 @@ share one repo — instead of dropping you at the `--resume` picker.
 
 Copy = drag with the mouse (→ system clipboard). Paste = `Ctrl+Shift+V`.
 `Shift+drag` gives the terminal's own native selection.
+
+**There is no kill-window.** `Ctrl+w` closes one pane, and takes the tab with it
+only when it is the last pane. Everything that could drop a tab full of splits
+in one keystroke is unbound — `X`, the `&` confirm-kill default, and the
+Kill/Respawn entries in the window menu (`<`, and right-click on a tab in the
+status bar). Right-click was the sharp one: in a mouse-first setup, Kill sat one
+slip away from Swap. To close a tab, close its panes.
 
 ## Install
 
