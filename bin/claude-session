@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Attach to the 'claude' tmux session, or if it doesn't exist (e.g. after a
+# reboot) restore the last saved layout ONCE, then attach.
+#
+# Restore logic -- and the reasons behind it -- live in
+# claude-tmux-restore-core, shared with the headless boot path.
+set -uo pipefail
+
+if ! tmux has-session -t claude 2>/dev/null; then
+  "$(dirname "$(readlink -f "$0")")/claude-tmux-restore-core"
+fi
+exec tmux attach -t claude

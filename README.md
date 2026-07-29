@@ -30,14 +30,25 @@ share one repo — instead of dropping you at the `--resume` picker.
   Claude's live registry (`~/.claude/sessions/<pid>.json`, reached by walking the
   pane's process subtree) and rewrites the saved restore command to
   `claude --resume <sessionId>`. Runs before resurrect's dedup, so a stable
-  layout still collapses to one state file.
-- **`bin/claude-tmux-boot-restore`** — headless, idempotent one-shot restore
-  (create the `claude` session + restore, no attach). Safe to re-run: if the
-  session already exists it does nothing.
+  layout still collapses to one state file. It only pins `--resume` when the
+  transcript is actually resumable *from that pane's cwd* — renaming a repo
+  moves the cwd and orphans every transcript filed under the old project key,
+  so an unresolvable id degrades to a plain `claude` instead of a pane that
+  dies with "No conversation found" on every restore.
+- **`bin/claude-tmux-restore-core`** — the restore itself, shared by both entry
+  points. Bootstraps under a throwaway session name and lets resurrect create
+  `claude` from the state file, waits for the restore to settle, then reports
+  what it got. See the header comment for why both of those matter.
+- **`bin/claude-tmux-boot-restore`** — headless entry point (no attach), for systemd.
+- **`bin/claude-session`** — interactive entry point: attach, restoring first if
+  the session isn't up yet.
 - **`systemd/claude-tmux-restore.service`** — runs the boot restore after
   `plasma-workspace.target`, i.e. at the end of graphical login.
 
-`install.sh` symlinks all three into place and enables the service.
+Both entry points are idempotent: if the `claude` session already exists they do
+nothing, so they never clobber a session you built by hand.
+
+`install.sh` symlinks them all into place and enables the service.
 
 [Claude Code]: https://claude.com/claude-code
 

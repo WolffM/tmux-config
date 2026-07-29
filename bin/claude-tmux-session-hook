@@ -34,28 +34,41 @@ shopt -u nullglob
 # session:win.pane -> sessionId, by walking each claude pane's subtree
 _descendants() { local p=$1 c; printf '%s\n' "$p"; for c in $(pgrep -P "$p" 2>/dev/null || true); do _descendants "$c"; done; }
 
+# Claude keys each transcript directory off the pane's cwd, with '/', '.' and
+# '_' all folded to '-'  (/home/me/repos/a_b/.x -> -home-me-repos-a-b--x).
+_project_key() { printf '%s' "$1" | sed 's/[\/._]/-/g'; }
+
 mapfile="$(mktemp)"
 trap 'rm -f "$mapfile"' EXIT
-while IFS='|' read -r pos ppid cmd; do
+while IFS='|' read -r pos ppid cmd cwd; do
   [ "$cmd" = "claude" ] || continue
   for d in $(_descendants "$ppid"); do
-    if [ -n "${REG[$d]:-}" ]; then
-      # emit  session <tab> win <tab> pane <tab> sid
-      printf '%s\t%s\n' "${pos//[:.]/	}" "${REG[$d]}" >> "$mapfile"
-      break
+    sid="${REG[$d]:-}"
+    [ -n "$sid" ] || continue
+    # Only pin --resume if that transcript is actually resumable FROM THIS CWD.
+    # Renaming a repo moves the cwd, and with it the project key, orphaning
+    # every transcript filed under the old path; `claude --resume <id>` then
+    # dies with "No conversation found" on every future restore. Degrade to a
+    # plain `claude` so the pane still comes up in the right directory.
+    # emit  session <tab> win <tab> pane <tab> restore-command
+    if [ -f "$HOME/.claude/projects/$(_project_key "$cwd")/$sid.jsonl" ]; then
+      printf '%s\tclaude --resume %s\n' "${pos//[:.]/	}" "$sid" >> "$mapfile"
+    else
+      printf '%s\tclaude\n' "${pos//[:.]/	}" >> "$mapfile"
     fi
+    break
   done
-done < <(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}|#{pane_pid}|#{pane_current_command}' 2>/dev/null || true)
+done < <(tmux list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}|#{pane_pid}|#{pane_current_command}|#{pane_current_path}' 2>/dev/null || true)
 
 [ -s "$mapfile" ] || exit 0
 
 # Rewrite field 11 for the claude panes we resolved.
 tmp="$(mktemp)"
 awk -F'\t' -v OFS='\t' '
-  NR==FNR { sid[$1 SUBSEP $2 SUBSEP $3] = $4; next }
+  NR==FNR { cmd[$1 SUBSEP $2 SUBSEP $3] = $4; next }
   /^pane/ && $10 == "claude" {
     k = $2 SUBSEP $3 SUBSEP $6
-    if (k in sid) $11 = ":claude --resume " sid[k]
+    if (k in cmd) $11 = ":" cmd[k]
   }
   { print }
 ' "$mapfile" "$state" > "$tmp" && cat "$tmp" > "$state"

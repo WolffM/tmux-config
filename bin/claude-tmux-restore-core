@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# One-shot restore of the 'claude' tmux session. Never attaches.
+#
+# Shared by `claude-session` (attach-or-restore, interactive) and
+# `claude-tmux-boot-restore` (headless, systemd at login).
+#
+# Idempotent: if the session already exists this is a no-op, so it never
+# clobbers a session built by hand. Restore stays deliberately one-shot and
+# manual (@continuum-restore is off) because the restore-on-session-created
+# hook races and re-restores bad layouts.
+#
+# Two things this handles that a naive `new-session -d -s claude; restore.sh`
+# does not:
+#
+#  1. It bootstraps with a THROWAWAY session name, never `claude` itself.
+#
+#     tmux-resurrect only overwrites an already-existing pane when the whole
+#     server has exactly one pane -- detect_if_restoring_from_scratch()
+#     (restore.sh:245) counts `tmux list-panes -a` server-wide. So if any other
+#     tmux session happens to be running, a pre-created `claude:1.1` is instead
+#     registered as "already exists" and its process is deliberately NOT
+#     restored (restore.sh:192). You silently lose the first pane's claude.
+#     Letting resurrect create `claude` from the state file avoids that.
+#
+#     It also removes the need for a "drop the leftover bootstrap window" step.
+#     The old code ran `kill-window -t claude:1` after restoring, but resurrect
+#     had already REUSED that window for real restored content -- so the kill
+#     destroyed the first saved window, and `renumber-windows on` shifted every
+#     other window down one index, making the loss easy to miss. That is what
+#     ate a 3-pane window on 2026-07-29.
+#
+#  2. It waits for the restore to actually settle instead of a fixed `sleep`,
+#     then reports a short restore instead of failing silently.
+set -uo pipefail
+
+SESSION="${CLAUDE_TMUX_SESSION:-claude}"
+RESURRECT_DIR="${CLAUDE_TMUX_RESURRECT_DIR:-$HOME/.local/share/tmux/resurrect}"
+LAST="$RESURRECT_DIR/last"
+RESTORE_SH="$HOME/.tmux/plugins/tmux-resurrect/scripts/restore.sh"
+TIMEOUT="${CLAUDE_TMUX_RESTORE_TIMEOUT:-60}"
+BOOTSTRAP="__claude_restore_bootstrap_$$"
+
+log() { printf 'claude-tmux-restore: %s\n' "$*" >&2; }
+
+command -v tmux >/dev/null 2>&1 || exit 0
+
+# Already up -- never touch it.
+tmux has-session -t "$SESSION" 2>/dev/null && exit 0
+
+if [ ! -f "$LAST" ] || [ ! -x "$RESTORE_SH" ]; then
+  tmux new-session -d -s "$SESSION"
+  log "no saved layout (or resurrect missing); created an empty '$SESSION' session"
+  exit 0
+fi
+
+# What the saved state says we should end up with.
+want_panes="$(awk -F'\t' -v s="$SESSION" '$1=="pane"   && $2==s' "$LAST" | wc -l)"
+want_wins="$( awk -F'\t' -v s="$SESSION" '$1=="window" && $2==s' "$LAST" | wc -l)"
+
+if [ "$want_panes" -eq 0 ]; then
+  tmux new-session -d -s "$SESSION"
+  log "saved layout has no '$SESSION' panes; created an empty session"
+  exit 0
+fi
+
+# Bootstrap under a throwaway name so resurrect builds '$SESSION' itself.
+tmux new-session -d -s "$BOOTSTRAP"
+# shellcheck disable=SC2064
+trap "tmux kill-session -t '$BOOTSTRAP' 2>/dev/null" EXIT
+
+tmux run-shell "$RESTORE_SH"
+
+# Poll until the pane count reaches the target, or stops moving for ~3s.
+deadline=$((SECONDS + TIMEOUT))
+prev=-1
+stalled=0
+while [ "$SECONDS" -lt "$deadline" ]; do
+  now="$(tmux list-panes -s -t "$SESSION" -F x 2>/dev/null | wc -l)"
+  [ "$now" -ge "$want_panes" ] && break
+  if [ "$now" -eq "$prev" ]; then
+    stalled=$((stalled + 1))
+    [ "$stalled" -ge 6 ] && break
+  else
+    stalled=0
+    prev="$now"
+  fi
+  sleep 0.5
+done
+
+tmux kill-session -t "$BOOTSTRAP" 2>/dev/null
+trap - EXIT
+
+if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+  tmux new-session -d -s "$SESSION"
+  log "RESTORE FAILED: resurrect created no '$SESSION' session; started an empty one"
+  log "saved layout: $(readlink -f "$LAST" 2>/dev/null || echo "$LAST")"
+  exit 0
+fi
+
+got_panes="$(tmux list-panes   -s -t "$SESSION" -F x 2>/dev/null | wc -l)"
+got_wins="$( tmux list-windows    -t "$SESSION" -F x 2>/dev/null | wc -l)"
+
+if [ "$got_panes" -lt "$want_panes" ] || [ "$got_wins" -lt "$want_wins" ]; then
+  log "INCOMPLETE RESTORE: got ${got_wins}w/${got_panes}p, expected ${want_wins}w/${want_panes}p"
+  log "saved layout: $(readlink -f "$LAST" 2>/dev/null || echo "$LAST")"
+  log "continuum overwrites 'last' on its next autosave -- copy that file aside now if you need it"
+else
+  log "restored ${got_wins} windows / ${got_panes} panes"
+fi
