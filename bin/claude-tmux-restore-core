@@ -44,6 +44,12 @@ log() { printf 'claude-tmux-restore: %s\n' "$*" >&2; }
 
 command -v tmux >/dev/null 2>&1 || exit 0
 
+# Provider guard: if the global default is GLM but its vault key is unfetchable
+# (vault re-seals on every reboot), revert the default to Anthropic so the
+# panes about to be restored launch on a working provider instead of dying on
+# a failing apiKeyHelper. No-op unless GLM is both active AND broken.
+"$HOME/.local/bin/claude-provider" guard >/dev/null 2>&1 || true
+
 # Already up -- never touch it.
 tmux has-session -t "$SESSION" 2>/dev/null && exit 0
 
