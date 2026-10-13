@@ -6,9 +6,13 @@
 # `claude --resume <sessionId>`, so a restored pane reattaches to the *exact*
 # Claude session it was running — even when several sessions share one repo.
 #
-# The session id is resolved authoritatively from Claude's live running-session
-# registry (~/.claude/sessions/<pid>.json), reached by walking each pane's
-# process subtree to the registered (version-execed) claude pid.
+# The session id is resolved from Claude's live running-session registry
+# (~/.claude/sessions/<pid>.json), reached by walking each pane's process
+# subtree to the registered (version-execed) claude pid. Registry files can
+# vanish while their sessions keep running (seen 2026-10-12: every file but
+# one was gone, and saves silently lost all ids), so two fallbacks follow:
+# the session's open scratch dir handle (/tmp/claude-<uid>/<project>/<id>/…),
+# then a `--resume <id>` on the process command line.
 #
 # Runs BEFORE resurrect's dedup (save.sh:246), so a stable layout still dedups
 # to a single state file — no churn.
@@ -29,7 +33,14 @@ for f in "$HOME"/.claude/sessions/*.json; do
   [ -n "$sid" ] && REG["$pid"]="$sid"
 done
 shopt -u nullglob
-[ ${#REG[@]} -gt 0 ] || exit 0
+
+UUID='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+_sid_of() {
+  local p=$1 sid="${REG[$1]:-}"
+  [ -n "$sid" ] || sid="$(ls -l "/proc/$p/fd" 2>/dev/null | grep -oE "/tmp/claude-$(id -u)/[^/]+/$UUID" | head -1 | awk -F/ '{print $NF}')"
+  [ -n "$sid" ] || sid="$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -oE -- "--resume $UUID" | head -1 | cut -d' ' -f2)"
+  printf '%s' "$sid"
+}
 
 # session:win.pane -> sessionId, by walking each claude pane's subtree
 _descendants() { local p=$1 c; printf '%s\n' "$p"; for c in $(pgrep -P "$p" 2>/dev/null || true); do _descendants "$c"; done; }
@@ -43,7 +54,7 @@ trap 'rm -f "$mapfile"' EXIT
 while IFS='|' read -r pos ppid cmd cwd; do
   [ "$cmd" = "claude" ] || continue
   for d in $(_descendants "$ppid"); do
-    sid="${REG[$d]:-}"
+    sid="$(_sid_of "$d")"
     [ -n "$sid" ] || continue
     # Only pin --resume if that transcript is actually resumable FROM THIS CWD.
     # Renaming a repo moves the cwd, and with it the project key, orphaning
