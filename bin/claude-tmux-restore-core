@@ -42,6 +42,19 @@ BOOTSTRAP="__claude_restore_bootstrap_$$"
 
 log() { printf 'claude-tmux-restore: %s\n' "$*" >&2; }
 
+# Start a session with the server in a scope of its own. The first new-session
+# forks the tmux server, and a process stays in the cgroup of whatever started
+# it: run from claude-tmux-restore.service, the server lived inside that unit,
+# so stopping or restarting the unit killed tmux and every pane with it. Falls
+# back to a plain new-session when there is no user manager to ask, so a restore
+# never fails over this.
+new_session() {
+  systemd-run --user --scope --quiet --collect --unit="tmux-server-$$" \
+    --description="tmux server (claude-tmux-restore)" \
+    -- tmux new-session -d "$@" 2>/dev/null \
+    || tmux new-session -d "$@"
+}
+
 command -v tmux >/dev/null 2>&1 || exit 0
 
 # Provider guard: if the global default is GLM but its vault key is unfetchable
@@ -54,7 +67,7 @@ command -v tmux >/dev/null 2>&1 || exit 0
 tmux has-session -t "$SESSION" 2>/dev/null && exit 0
 
 if [ ! -f "$LAST" ] || [ ! -x "$RESTORE_SH" ]; then
-  tmux new-session -d -s "$SESSION"
+  new_session -s "$SESSION"
   log "no saved layout (or resurrect missing); created an empty '$SESSION' session"
   exit 0
 fi
@@ -64,13 +77,13 @@ want_panes="$(awk -F'\t' -v s="$SESSION" '$1=="pane"   && $2==s' "$LAST" | wc -l
 want_wins="$( awk -F'\t' -v s="$SESSION" '$1=="window" && $2==s' "$LAST" | wc -l)"
 
 if [ "$want_panes" -eq 0 ]; then
-  tmux new-session -d -s "$SESSION"
+  new_session -s "$SESSION"
   log "saved layout has no '$SESSION' panes; created an empty session"
   exit 0
 fi
 
 # Bootstrap under a throwaway name so resurrect builds '$SESSION' itself.
-tmux new-session -d -s "$BOOTSTRAP"
+new_session -s "$BOOTSTRAP"
 # shellcheck disable=SC2064
 trap "tmux kill-session -t '$BOOTSTRAP' 2>/dev/null" EXIT
 
@@ -97,7 +110,7 @@ tmux kill-session -t "$BOOTSTRAP" 2>/dev/null
 trap - EXIT
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-  tmux new-session -d -s "$SESSION"
+  new_session -s "$SESSION"
   log "RESTORE FAILED: resurrect created no '$SESSION' session; started an empty one"
   log "saved layout: $(readlink -f "$LAST" 2>/dev/null || echo "$LAST")"
   exit 0
