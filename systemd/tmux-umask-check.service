@@ -1,0 +1,7 @@
+[Unit]
+Description=Check that no tmux server has leaked umask 0117 (tmux 3.5a SIGUSR1 bug)
+
+[Service]
+Type=oneshot
+# Read-only: reads /proc/<pid>/status of each tmux server, never signals one.
+ExecStart=%h/.local/bin/tmux-socket-recover --check

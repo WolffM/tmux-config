@@ -37,10 +37,18 @@ ln -sfn "$here/bin/claude-tmux-boot-restore"        "$HOME/.local/bin/claude-tmu
 ln -sfn "$here/bin/claude-session"                  "$HOME/.local/bin/claude-session"
 ln -sfn "$here/systemd/claude-tmux-restore.service" "$HOME/.config/systemd/user/claude-tmux-restore.service"
 echo "linked session-restore utility (bin + systemd unit)"
+#    - tmux-socket-recover : bring a lost socket back without tmux 3.5a's
+#      umask leak; --check (every 15 min, timer) warns if a server has it.
+ln -sfn "$here/bin/tmux-socket-recover"             "$HOME/.local/bin/tmux-socket-recover"
+ln -sfn "$here/systemd/tmux-umask-check.service"    "$HOME/.config/systemd/user/tmux-umask-check.service"
+ln -sfn "$here/systemd/tmux-umask-check.timer"      "$HOME/.config/systemd/user/tmux-umask-check.timer"
+echo "linked tmux-socket-recover (bin + umask-check timer)"
 if command -v systemctl >/dev/null; then
   systemctl --user daemon-reload
   systemctl --user enable claude-tmux-restore.service >/dev/null 2>&1 \
     && echo "enabled claude-tmux-restore.service (headless restore at login)"
+  systemctl --user enable --now tmux-umask-check.timer >/dev/null 2>&1 \
+    && echo "enabled tmux-umask-check.timer"
 fi
 
 # 4) reload if a server is running

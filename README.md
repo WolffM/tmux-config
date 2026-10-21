@@ -50,6 +50,23 @@ nothing, so they never clobber a session you built by hand.
 
 `install.sh` symlinks them all into place and enables the service.
 
+## Lost socket: `tmux-socket-recover`
+
+If `/tmp/tmux-$UID/default` disappears (a `/tmp` sweep took it on 2026-10-20),
+the server keeps running but nothing can attach. `kill -USR1 <server>` makes it
+recreate the socket, **but never do that bare**: on tmux 3.5a (Debian trixie,
+and 3.6b in backports) a USR1 while the socket *directory* is missing fails
+`bind()`, and that error path leaves the server stuck on umask 0117 for good
+(`server.c:125-135`, fixed upstream in 3.8). Every pane opened afterwards then
+creates directories with no execute bit.
+
+`tmux-socket-recover` recreates the directory (0700) first, signals only when
+the socket is really gone, and then checks the server's umask, printing the
+in-place `gdb` fix if it is wrong. It never kills or restarts a server.
+`tmux-umask-check.timer` runs `tmux-socket-recover --check` (read-only) every
+15 minutes and raises a desktop notification if any server's umask is not
+`$TMUX_EXPECTED_UMASK` (default 0002).
+
 [Claude Code]: https://claude.com/claude-code
 
 ## Keymap (all after the `Ctrl-Space` prefix)
