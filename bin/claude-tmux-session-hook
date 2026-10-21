@@ -6,8 +6,8 @@
 # `claude --resume <sessionId>`, so a restored pane reattaches to the *exact*
 # Claude session it was running — even when several sessions share one repo.
 #
-# The session id is resolved from Claude's live running-session registry
-# (~/.claude/sessions/<pid>.json), reached by walking each pane's process
+# The session id is resolved from Claude's live running-session registries
+# (~/.claude/sessions/ and ~/.claude-accounts/*/sessions/<pid>.json), reached by walking each pane's process
 # subtree to the registered (version-execed) claude pid. Registry files can
 # vanish while their sessions keep running (seen 2026-10-12: every file but
 # one was gone, and saves silently lost all ids), so two fallbacks follow:
@@ -24,13 +24,26 @@ state="${1:-}"
 [ -n "$state" ] && [ -f "$state" ] || exit 0
 command -v tmux >/dev/null 2>&1 || exit 0
 
-# pid -> sessionId, from the live session registry
+# pid -> sessionId, from the live session registry.
+#
+# EVERY account's registry, not just ~/.claude's. Since the account split
+# (2026-10-18) each session registers under its own CLAUDE_CONFIG_DIR,
+# ~/.claude-accounts/<name>/sessions/, and ~/.claude/sessions stays empty — so
+# this loop found nothing and every id came from the fallbacks below (measured
+# 2026-10-20: 36 panes, 29 by scratch fd, 7 by argv, 0 by registry).
+#
+# An entry counts only while its pid is alive AND started when the entry says
+# (procStart = field 22 of /proc/<pid>/stat). A registry file can outlive its
+# process, and a reused pid belonging to another claude would otherwise pin
+# that pane to the wrong conversation.
 declare -A REG
+_starttime() { local s; s="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1; s="${s##*) }"; set -- $s; printf '%s' "${20}"; }
 shopt -s nullglob
-for f in "$HOME"/.claude/sessions/*.json; do
+for f in "$HOME"/.claude/sessions/*.json "$HOME"/.claude-accounts/*/sessions/*.json; do
   pid="$(basename "$f" .json)"
   sid="$(grep -o '"sessionId":"[^"]*"' "$f" 2>/dev/null | head -1 | cut -d'"' -f4)"
-  [ -n "$sid" ] && REG["$pid"]="$sid"
+  started="$(grep -o '"procStart":"[^"]*"' "$f" 2>/dev/null | head -1 | cut -d'"' -f4)"
+  [ -n "$sid" ] && [ -n "$started" ] && [ "$(_starttime "$pid")" = "$started" ] && REG["$pid"]="$sid"
 done
 shopt -u nullglob
 
