@@ -24,7 +24,7 @@ echo "plugins installed under $P"
 #      pane to `claude --resume <sessionId>` so restores skip the picker.
 #    - claude-tmux-restore-core : the actual restore, shared by both entry points.
 #    - claude-tmux-boot-restore : headless one-shot restore (systemd).
-#    - claude-session           : attach, restoring first if not yet up.
+#    - claude-session [name]    : attach, restoring first if not yet up.
 #    - claude-tmux-restore.service : runs the boot restore at the end of login.
 mkdir -p "$HOME/.local/bin" "$HOME/.config/systemd/user"
 # claude-session used to be an untracked real file in ~/.local/bin; retire it.

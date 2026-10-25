@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Headless one-shot restore of the 'claude' tmux session at login.
+# Headless one-shot restore of every saved tmux session at login.
 # Mirrors `claude-session` but never attaches (runs from systemd, no terminal).
 #
 # All the actual logic -- and the reasons behind it -- live in

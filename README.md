@@ -18,6 +18,11 @@ and reboots; the terminal is the tab manager, not the app.
 - **Persistence** via [tmux-resurrect] + [tmux-continuum]: layout auto-saved
   every 5 min. Auto-restore is intentionally **off** (it races/clobbers) —
   restore is on-demand instead.
+- **Several sessions, one save.** Split work into named sessions (e.g.
+  `platform` and `creative`); resurrect saves and restores all of them together.
+  `N` starts a session, `M` moves the current tab into another one, `s` picks
+  from a tree of every session and tab, `(` / `)` cycle sessions. The current
+  session's name sits at the left of the status bar.
 
 ## Claude session restore
 
@@ -37,16 +42,18 @@ share one repo — instead of dropping you at the `--resume` picker.
   dies with "No conversation found" on every restore.
 - **`bin/claude-tmux-restore-core`** — the restore itself, shared by both entry
   points. Bootstraps under a throwaway session name and lets resurrect create
-  `claude` from the state file, waits for the restore to settle, then reports
-  what it got. See the header comment for why both of those matter.
+  every saved session from the state file, waits for the restore to settle,
+  then reports what it got per session. See the header comment for why both of
+  those matter. Given a session name, it also makes sure that session exists.
 - **`bin/claude-tmux-boot-restore`** — headless entry point (no attach), for systemd.
-- **`bin/claude-session`** — interactive entry point: attach, restoring first if
-  the session isn't up yet.
+- **`bin/claude-session [name]`** — interactive entry point: restore first if no
+  saved session is up yet, then attach to `name` (created if missing) or, with
+  no name, to the most recently used session.
 - **`systemd/claude-tmux-restore.service`** — runs the boot restore after
   `plasma-workspace.target`, i.e. at the end of graphical login.
 
-Both entry points are idempotent: if the `claude` session already exists they do
-nothing, so they never clobber a session you built by hand.
+Both entry points are idempotent: if any saved session is already running they
+restore nothing, so they never clobber sessions you built by hand.
 
 `install.sh` symlinks them all into place and enables the service.
 

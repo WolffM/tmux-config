@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
-# Attach to the 'claude' tmux session, or if it doesn't exist (e.g. after a
-# reboot) restore the last saved layout ONCE, then attach.
+# Attach to a tmux session. If the server is down (e.g. after a reboot), restore
+# every saved session ONCE first.
+#
+# Usage: claude-session [session]
+#   With a name: attach to that session, creating it if it does not exist.
+#   Without:     attach to the most recently used session.
 #
 # Restore logic -- and the reasons behind it -- live in
 # claude-tmux-restore-core, shared with the headless boot path.
 set -uo pipefail
 
-if ! tmux has-session -t claude 2>/dev/null; then
-  "$(dirname "$(readlink -f "$0")")/claude-tmux-restore-core"
+core="$(dirname "$(readlink -f "$0")")/claude-tmux-restore-core"
+
+if [ -n "${1:-}" ]; then
+  "$core" "$1"
+  exec tmux attach -t "=$1"
 fi
-exec tmux attach -t claude
+
+"$core"
+# Nothing saved and nothing running: start a fresh session to attach to.
+tmux has-session 2>/dev/null || "$core" main
+exec tmux attach

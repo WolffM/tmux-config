@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# One-shot restore of the 'claude' tmux session. Never attaches.
+# One-shot restore of every saved tmux session. Never attaches.
 #
 # Shared by `claude-session` (attach-or-restore, interactive) and
 # `claude-tmux-boot-restore` (headless, systemd at login).
 #
-# Idempotent: if the session already exists this is a no-op, so it never
-# clobbers a session built by hand. Restore stays deliberately one-shot and
-# manual (@continuum-restore is off) because the restore-on-session-created
-# hook races and re-restores bad layouts.
+# Usage: claude-tmux-restore-core [session]
+#   With a session name, that session is guaranteed to exist afterwards
+#   (created empty if the saved layout has no such session).
+#
+# Idempotent: if any session from the saved layout is already running this is a
+# no-op, so it never clobbers sessions built by hand. Restore stays deliberately
+# one-shot and manual (@continuum-restore is off) because the
+# restore-on-session-created hook races and re-restores bad layouts.
 #
 # Two things this handles that a naive `new-session -d -s claude; restore.sh`
 # does not:
 #
-#  1. It bootstraps with a THROWAWAY session name, never `claude` itself.
+#  1. It bootstraps with a THROWAWAY session name, never a saved session's.
 #
 #     tmux-resurrect only overwrites an already-existing pane when the whole
 #     server has exactly one pane -- detect_if_restoring_from_scratch()
@@ -20,7 +24,7 @@
 #     tmux session happens to be running, a pre-created `claude:1.1` is instead
 #     registered as "already exists" and its process is deliberately NOT
 #     restored (restore.sh:192). You silently lose the first pane's claude.
-#     Letting resurrect create `claude` from the state file avoids that.
+#     Letting resurrect create every session from the state file avoids that.
 #
 #     It also removes the need for a "drop the leftover bootstrap window" step.
 #     The old code ran `kill-window -t claude:1` after restoring, but resurrect
@@ -33,7 +37,7 @@
 #     then reports a short restore instead of failing silently.
 set -uo pipefail
 
-SESSION="${CLAUDE_TMUX_SESSION:-claude}"
+SESSION="${1:-}"
 RESURRECT_DIR="${CLAUDE_TMUX_RESURRECT_DIR:-$HOME/.local/share/tmux/resurrect}"
 LAST="$RESURRECT_DIR/last"
 RESTORE_SH="$HOME/.tmux/plugins/tmux-resurrect/scripts/restore.sh"
@@ -47,8 +51,9 @@ log() { printf 'claude-tmux-restore: %s\n' "$*" >&2; }
 # it: run from claude-tmux-restore.service, the server lived inside that unit,
 # so stopping or restarting the unit killed tmux and every pane with it. Falls
 # back to a plain new-session when there is no user manager to ask, so a restore
-# never fails over this.
+# never fails over this. Only the call that starts the server needs the scope.
 new_session() {
+  tmux info >/dev/null 2>&1 && { tmux new-session -d "$@"; return; }
   systemd-run --user --scope --quiet --collect --unit="tmux-server-$$" \
     --description="tmux server (claude-tmux-restore)" \
     -- tmux new-session -d "$@" 2>/dev/null \
@@ -63,38 +68,57 @@ command -v tmux >/dev/null 2>&1 || exit 0
 # a failing apiKeyHelper. No-op unless GLM is both active AND broken.
 "$HOME/.local/bin/claude-provider" guard >/dev/null 2>&1 || true
 
-# Already up -- never touch it.
-tmux has-session -t "$SESSION" 2>/dev/null && exit 0
+# Make sure the requested session exists (a no-op without one).
+ensure_session() {
+  [ -n "$SESSION" ] || return 0
+  tmux has-session -t "=$SESSION" 2>/dev/null || new_session -s "$SESSION"
+}
 
 if [ ! -f "$LAST" ] || [ ! -x "$RESTORE_SH" ]; then
-  new_session -s "$SESSION"
-  log "no saved layout (or resurrect missing); created an empty '$SESSION' session"
+  log "no saved layout (or resurrect missing); nothing to restore"
+  ensure_session
   exit 0
 fi
 
-# What the saved state says we should end up with.
-want_panes="$(awk -F'\t' -v s="$SESSION" '$1=="pane"   && $2==s' "$LAST" | wc -l)"
-want_wins="$( awk -F'\t' -v s="$SESSION" '$1=="window" && $2==s' "$LAST" | wc -l)"
+# Every session the saved state holds, and how many panes/windows each should
+# end up with.
+mapfile -t saved < <(awk -F'\t' '$1=="pane" { print $2 }' "$LAST" | sort -u)
 
-if [ "$want_panes" -eq 0 ]; then
-  new_session -s "$SESSION"
-  log "saved layout has no '$SESSION' panes; created an empty session"
+if [ "${#saved[@]}" -eq 0 ]; then
+  log "saved layout has no panes; nothing to restore"
+  ensure_session
   exit 0
 fi
 
-# Bootstrap under a throwaway name so resurrect builds '$SESSION' itself.
+# Already up -- never touch it. Any saved session running means this server
+# was restored (or rebuilt by hand) already.
+for s in "${saved[@]}"; do
+  if tmux has-session -t "=$s" 2>/dev/null; then
+    ensure_session
+    exit 0
+  fi
+done
+
+want_panes="$(awk -F'\t' '$1=="pane"' "$LAST" | wc -l)"
+
+# Bootstrap under a throwaway name so resurrect builds every saved session itself.
 new_session -s "$BOOTSTRAP"
 # shellcheck disable=SC2064
-trap "tmux kill-session -t '$BOOTSTRAP' 2>/dev/null" EXIT
+trap "tmux kill-session -t '=$BOOTSTRAP' 2>/dev/null" EXIT
 
 tmux run-shell "$RESTORE_SH"
+
+# Panes server-wide, minus the bootstrap's.
+restored_panes() {
+  tmux list-panes -a -F '#{session_name}' 2>/dev/null | grep -cvxF -- "$BOOTSTRAP"
+}
 
 # Poll until the pane count reaches the target, or stops moving for ~3s.
 deadline=$((SECONDS + TIMEOUT))
 prev=-1
 stalled=0
 while [ "$SECONDS" -lt "$deadline" ]; do
-  now="$(tmux list-panes -s -t "$SESSION" -F x 2>/dev/null | wc -l)"
+  now="$(restored_panes)"
   [ "$now" -ge "$want_panes" ] && break
   if [ "$now" -eq "$prev" ]; then
     stalled=$((stalled + 1))
@@ -106,23 +130,32 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   sleep 0.5
 done
 
-tmux kill-session -t "$BOOTSTRAP" 2>/dev/null
+# The bootstrap must stay up until the requested session exists, or killing
+# the last session would take the server down with it.
+ensure_session
+tmux kill-session -t "=$BOOTSTRAP" 2>/dev/null
 trap - EXIT
 
-if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-  new_session -s "$SESSION"
-  log "RESTORE FAILED: resurrect created no '$SESSION' session; started an empty one"
-  log "saved layout: $(readlink -f "$LAST" 2>/dev/null || echo "$LAST")"
-  exit 0
-fi
+short=0
+for s in "${saved[@]}"; do
+  want_p="$(awk -F'\t' -v s="$s" '$1=="pane"   && $2==s' "$LAST" | wc -l)"
+  want_w="$(awk -F'\t' -v s="$s" '$1=="window" && $2==s' "$LAST" | wc -l)"
+  if ! tmux has-session -t "=$s" 2>/dev/null; then
+    log "RESTORE FAILED: resurrect created no '$s' session"
+    short=1
+    continue
+  fi
+  got_p="$(tmux list-panes -s -t "=$s" -F x 2>/dev/null | wc -l)"
+  got_w="$(tmux list-windows  -t "=$s" -F x 2>/dev/null | wc -l)"
+  if [ "$got_p" -lt "$want_p" ] || [ "$got_w" -lt "$want_w" ]; then
+    log "INCOMPLETE RESTORE of '$s': got ${got_w}w/${got_p}p, expected ${want_w}w/${want_p}p"
+    short=1
+  else
+    log "restored '$s': ${got_w} windows / ${got_p} panes"
+  fi
+done
 
-got_panes="$(tmux list-panes   -s -t "$SESSION" -F x 2>/dev/null | wc -l)"
-got_wins="$( tmux list-windows    -t "$SESSION" -F x 2>/dev/null | wc -l)"
-
-if [ "$got_panes" -lt "$want_panes" ] || [ "$got_wins" -lt "$want_wins" ]; then
-  log "INCOMPLETE RESTORE: got ${got_wins}w/${got_panes}p, expected ${want_wins}w/${want_panes}p"
+if [ "$short" -eq 1 ]; then
   log "saved layout: $(readlink -f "$LAST" 2>/dev/null || echo "$LAST")"
   log "continuum overwrites 'last' on its next autosave -- copy that file aside now if you need it"
-else
-  log "restored ${got_wins} windows / ${got_panes} panes"
 fi

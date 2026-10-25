@@ -1,5 +1,5 @@
 [Unit]
-Description=Restore the claude tmux session (headless, end of graphical login)
+Description=Restore every saved tmux session (headless, end of graphical login)
 # Run after the Plasma workspace is up, so this lands at the end of the
 # boot auto-restart sequence.
 After=plasma-workspace.target graphical-session.target
