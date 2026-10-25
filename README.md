@@ -20,7 +20,7 @@ and reboots; the terminal is the tab manager, not the app.
   restore is on-demand instead.
 - **Several sessions, one save.** Split work into named sessions (e.g.
   `platform` and `creative`); resurrect saves and restores all of them together.
-  `N` starts a session, `M` moves the current tab into another one, `s` picks
+  `g` starts a session, `M` moves the current tab into another one, `s` picks
   from a tree of every session and tab, `(` / `)` cycle sessions. The current
   session's name sits at the left of the status bar.
 
