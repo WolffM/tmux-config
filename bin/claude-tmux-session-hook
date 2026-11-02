@@ -76,9 +76,9 @@ while IFS='|' read -r pos ppid cmd cwd; do
     # plain `claude` so the pane still comes up in the right directory.
     # emit  session <tab> win <tab> pane <tab> restore-command
     if [ -f "$HOME/.claude/projects/$(_project_key "$cwd")/$sid.jsonl" ]; then
-      printf '%s\tclaude --resume %s\n' "${pos//[:.]/	}" "$sid" >> "$mapfile"
+      printf '%s\tclaude --dangerously-skip-permissions --resume %s\n' "${pos//[:.]/	}" "$sid" >> "$mapfile"
     else
-      printf '%s\tclaude\n' "${pos//[:.]/	}" >> "$mapfile"
+      printf '%s\tclaude --dangerously-skip-permissions\n' "${pos//[:.]/	}" >> "$mapfile"
     fi
     break
   done
