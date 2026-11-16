@@ -8,8 +8,9 @@
   by then, already reused for the real content (`9c78ccb`, 2026-07-29).
 - tmux 3.5a (and 3.6b in Debian trixie-backports) has a bug where signalling
   a server to recreate its socket, while the socket's *directory* is also
-  missing, leaves that server's umask permanently wrong — found a day after
-  a `/tmp` sweep deleted the directory outright (`5aed18f`, 2026-10-21).
+  missing, leaves that server's umask permanently wrong. It was found a day
+  after a `/tmp` sweep deleted the directory outright (`5aed18f`,
+  2026-10-21).
 - The longest gap in the repo's history is 54 days with no commits at all:
   `9c78ccb` (2026-07-29) to `5f8ba07` (2026-09-21) (fact sheet, 2026-11-16).
 - `README.md` has been touched in 8 of the repo's 13 commits — more than any

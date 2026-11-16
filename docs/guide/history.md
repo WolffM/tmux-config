@@ -16,12 +16,12 @@ week, two more commits (`032e75f`, `6ba9aa0`, both 2026-07-22) renamed tabs
 after their directory instead of the running command, and removed every
 one-keystroke way to kill a whole tab of panes.
 
-The era ends with its only outright bug fix: `9c78ccb` (2026-07-29) found
+The era ends with its only outright bug fix. `9c78ccb` (2026-07-29) found
 that the restore code killed a leftover bootstrap window every time it ran,
-to drop what it thought was a blank bootstrap window — but `tmux-resurrect`
-had, by then, already reused that window for the first saved window's real
-content, so the kill destroyed it instead. On 2026-07-29 this silently ate
-a 3-pane window on a 13-window restore. See
+meaning to drop what it thought was still a blank bootstrap window. But
+`tmux-resurrect` had, by then, already reused that window for the first
+saved window's real content, so the kill destroyed it instead — silently
+eating a 3-pane window on a 13-window restore. See
 [features.md#session-persistence](features.md#session-persistence) for how
 the fix (bootstrapping under a throwaway session name instead) works.
 
@@ -41,9 +41,9 @@ failure:
   a pane's open scratch-dir handle, then `--resume` on its own command line.
 - `015802a` (2026-10-20): since the account split on 2026-10-18, each
   session registers under its own account's `CLAUDE_CONFIG_DIR` rather than
-  the shared `~/.claude/sessions/`, so the registry lookup alone found
-  nothing — a measured run that day resolved 36 panes by 29 scratch-dir
-  fallback, 7 argv fallback, 0 by registry.
+  the shared `~/.claude/sessions/`. The registry lookup alone found nothing;
+  a measured run that day resolved 36 panes by 29 scratch-dir fallback, 7
+  argv fallback, 0 by registry.
 - `15bdd79` (2026-10-21): the tmux server inherited the cgroup of whatever
   started it; run from the boot-restore systemd unit, that meant restarting
   the unit killed the server and every pane in it. `new-session` now starts
@@ -63,7 +63,7 @@ since the config otherwise avoids Shift chords. The most recent commit,
 A separate failure path, unrelated to session restore: on 2026-10-20 a
 `/tmp` sweep deleted the directory holding the running tmux server's socket.
 The obvious one-line fix, `kill -USR1` to make the server recreate it, has a
-trap on tmux 3.5a and 3.6b — signalling while the socket *directory* is
+trap on tmux 3.5a and 3.6b. Signalling while the socket *directory* is
 missing fails inside `bind()`, and the server never restores the umask it
 had set around that call, so every pane it creates afterward has no execute
 bit on new directories. `5aed18f`, the next day (2026-10-21), added

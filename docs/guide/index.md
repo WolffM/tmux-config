@@ -46,6 +46,22 @@ builds, recovering a lost socket the usual way (`kill -USR1`) can leave the
 server's directory-creation permissions silently broken for the rest of its
 life. `tmux-socket-recover` works around it.
 
+The status bar it draws, top of screen, dark background (`tmux.conf`'s
+`status-left` and `window-status-*` styles). The window format is tmux's
+own default, `#I:#W#F`, never overridden here: it appends `*` to the active
+window and `-` to the window last visited before it. Captured for real from
+an isolated test server, three windows opened in three public repos'
+clones:
+
+```text
+ work  1:trader  2:cardtable-  3:tenhands*
+```
+
+Tab names track each pane's working directory, not the command running in
+it: `trader`, `cardtable` and `tenhands` are the clone directories'
+basenames with a leading `hadoku-` stripped, not the command any of their
+panes happens to be running.
+
 - [Features](features.md): what each piece does and how to use it.
 - [Contributing](contributing.md): installing it, the scripts, how to change it.
 - [History](history.md): the first commit, the window a bad restore ate, and the account split that changed how sessions are found.

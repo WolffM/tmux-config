@@ -45,15 +45,16 @@ overwrites a layout you built by hand, saved or not.
 
 A `tmux-resurrect` post-save hook (`bin/claude-tmux-session-hook`,
 `@resurrect-hook-post-save-layout`) rewrites every Claude Code pane's saved
-restore command from a bare `claude --resume` (which drops you at the
-session picker) to `claude --resume <sessionId>` for the exact conversation
-that pane was running — even when several sessions share one repository. It
-resolves each pane's session id by walking its process tree against Claude's
-own live session registry, falling back to the pane's open scratch-dir file
-handle or its process command line if the registry entry is missing.
+restore command. A bare `claude --resume` (which drops you at the session
+picker) becomes `claude --resume <sessionId>` for the exact conversation
+that pane was running, even when several sessions share one repository. It
+resolves each pane's session id by walking its process tree against
+Claude's own live session registry, falling back to the pane's open
+scratch-dir file handle or its process command line if the registry entry
+is missing.
 
 It only pins `--resume <id>` when that transcript is still resumable *from
-that pane's current directory*; renaming a repo moves its transcript's
+that pane's current directory*. Renaming a repo moves its transcript's
 project key, so an unresolvable id degrades to a plain
 `claude --dangerously-skip-permissions` instead of a pane that fails every
 restore with "No conversation found."
@@ -62,11 +63,12 @@ restore with "No conversation found."
 
 Every single keystroke that can destroy an entire tab's worth of panes at
 once is unbound: `X` (kill-window), the `&` confirm-kill default, and the
-Kill and Respawn entries in the window menu, reachable both from `prefix +
-<` and from right-clicking a tab in the status bar (`tmux.conf`: `unbind X`,
-`unbind &`, and the two custom `display-menu` bindings that rebuild the
-window menu without those two entries). `Ctrl+w` closes one pane at a time,
-and only takes the tab with it when it was the last pane left.
+Kill and Respawn entries in the window menu. That menu is reachable both
+from `prefix + <` and from right-clicking a tab in the status bar
+(`tmux.conf`: `unbind X`, `unbind &`, and the two custom `display-menu`
+bindings that rebuild the window menu without those two entries). `Ctrl+w`
+closes one pane at a time, and only takes the tab with it when it was the
+last pane left.
 
 There is no remaining way to close a multi-pane tab in one step — closing it
 always means closing its panes one at a time.
@@ -74,15 +76,16 @@ always means closing its panes one at a time.
 ## Socket recovery
 
 `bin/tmux-socket-recover` brings a tmux server's socket back after its file
-(or its whole directory, e.g. a `/tmp` sweep) disappears, without triggering
-a bug in tmux 3.5a and 3.6b where a `SIGUSR1` sent while the socket
-*directory* is missing leaves the server's umask stuck wrong for the rest of
-its life (`server.c:125-135`, fixed upstream in 3.8). It recreates the
-directory with mode 0700 first, signals the server only once the socket is
-actually confirmed gone, and then checks the resulting umask, printing an
-in-place `gdb` fix if it is wrong. Run read-only with `--check`; a
-`tmux-umask-check.timer` user unit runs that check every 15 minutes and
-raises a desktop notification on a mismatch.
+(or its whole directory, e.g. a `/tmp` sweep) disappears. It works around a
+tmux bug (3.5a and 3.6b, fixed upstream in 3.8) where a `SIGUSR1` sent while
+the socket *directory* is missing leaves the server's umask stuck wrong for
+the rest of its life; see [contributing.md](contributing.md#architecture)
+for where that bug lives. It recreates the directory with mode 0700 first,
+signals the server only once the socket is actually confirmed gone, and
+then checks the resulting umask, printing an in-place `gdb` fix if it is
+wrong. Run read-only with `--check`; a `tmux-umask-check.timer` user unit
+runs that check every 15 minutes and raises a desktop notification on a
+mismatch.
 
 It never kills, restarts, or otherwise touches a server whose socket is
 already present and answering.

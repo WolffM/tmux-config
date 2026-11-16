@@ -47,7 +47,11 @@ or copied into a systemd unit's `ExecStart`.
   login).
 - `bin/tmux-socket-recover` — independent of the restore path above; see
   [features.md](features.md#socket-recovery). `systemd/tmux-umask-check.{service,timer}`
-  run its `--check` mode every 15 minutes.
+  run its `--check` mode every 15 minutes. The bug it works around is in
+  tmux's own `server.c` (around lines 125-135 in the 3.5a/3.6b source): a
+  `SIGUSR1` handler that never restores the process umask it changed if the
+  socket directory is missing when the signal arrives, fixed upstream in
+  3.8.
 
 ## Tests and gates
 
