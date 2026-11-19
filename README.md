@@ -1,5 +1,7 @@
 # tmux-config
 
+**Guide:** [overview](docs/guide/index.md) · [features](docs/guide/features.md) · [contributing](docs/guide/contributing.md) · [history](docs/guide/history.md) · [trivia](docs/guide/trivia.md)
+
 A mouse-first, no-Shift-gymnastics tmux setup. Layout survives Konsole crashes
 and reboots; the terminal is the tab manager, not the app.
 
