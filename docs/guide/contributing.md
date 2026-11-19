@@ -31,11 +31,15 @@ or copied into a systemd unit's `ExecStart`.
 
 - `tmux.conf` — the keymap, status bar, mouse bindings, and the three
   `tmux-resurrect`/`tmux-continuum` plugin settings that connect it to the
-  restore utility below.
+  restore utility below. `set-titles`/`set-titles-string "#I: #W"` also
+  pushes the active window's index and name out to the surrounding
+  terminal's own window title, not just tmux's status bar.
 - `bin/claude-tmux-session-hook` — runs as `tmux-resurrect`'s
-  `@resurrect-hook-post-save-layout` hook, on every autosave. Resolves each
-  Claude Code pane's session id and rewrites its saved restore command; see
-  [features.md](features.md#claude-session-restore).
+  `@resurrect-hook-post-save-layout` hook, on every autosave, and runs
+  BEFORE resurrect's own dedup step (`save.sh:246`) so a stable layout
+  still collapses to one state file rather than one per hook run. Resolves
+  each Claude Code pane's session id and rewrites its saved restore
+  command; see [features.md](features.md#claude-session-restore).
 - `bin/claude-tmux-restore-core` — the actual restore, shared by the two
   entry points below. Bootstraps a throwaway session first so
   `tmux-resurrect` is free to create every saved session itself, then polls
@@ -43,15 +47,17 @@ or copied into a systemd unit's `ExecStart`.
 - `bin/claude-session [name]` — interactive entry point: restore once if
   nothing is running yet, then attach.
 - `bin/claude-tmux-boot-restore` — the same restore, headless, for
-  `systemd/claude-tmux-restore.service` (runs once at the end of graphical
-  login).
+  `systemd/claude-tmux-restore.service` (`After=plasma-workspace.target`,
+  so it runs once at the end of graphical login, not at raw boot).
 - `bin/tmux-socket-recover` — independent of the restore path above; see
   [features.md](features.md#socket-recovery). `systemd/tmux-umask-check.{service,timer}`
   run its `--check` mode every 15 minutes. The bug it works around is in
   tmux's own `server.c` (around lines 125-135 in the 3.5a/3.6b source): a
-  `SIGUSR1` handler that never restores the process umask it changed if the
-  socket directory is missing when the signal arrives, fixed upstream in
-  3.8.
+  `SIGUSR1` handler sets umask `0117` around its `bind()` call and, if that
+  `bind()` fails (the socket directory is missing), returns without
+  restoring it — so the server keeps umask `0117` for the rest of its
+  life, and every directory a pane creates afterward has no execute bit,
+  fixed upstream in 3.8.
 
 ## Tests and gates
 

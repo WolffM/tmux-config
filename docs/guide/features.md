@@ -26,6 +26,20 @@ turns auto-rename off for that one tab.
 It only affects the window's displayed name — it does not change the actual
 command or directory.
 
+## Multiple sessions
+
+Work can be split across several named sessions (for example one for
+platform work and one for creative work) instead of one big session full
+of tabs. `prefix + g` prompts for a name and starts a new session; `prefix
++ M` moves the current tab into another named session; `prefix + s` opens
+tmux's own tree of every session and tab to jump to; `prefix + (` / `prefix
++ )` cycle to the previous or next session. The current session's name sits
+at the left of the status bar (`tmux.conf`'s `status-left`), so it is
+always visible which one is active.
+
+It is not a separate save: [session persistence](#session-persistence)
+autosaves and restores every session together, not just the one in front.
+
 ## Session persistence
 
 `tmux-continuum` autosaves the full layout (including each pane's command
@@ -82,7 +96,8 @@ the socket *directory* is missing leaves the server's umask stuck wrong for
 the rest of its life; see [contributing.md](contributing.md#architecture)
 for where that bug lives. It recreates the directory with mode 0700 first,
 signals the server only once the socket is actually confirmed gone, and
-then checks the resulting umask, printing an in-place `gdb` fix if it is
+then checks the resulting umask against `$TMUX_EXPECTED_UMASK` (default
+`0002`, systemd `--user`'s own), printing an in-place `gdb` fix if it is
 wrong. Run read-only with `--check`; a `tmux-umask-check.timer` user unit
 runs that check every 15 minutes and raises a desktop notification on a
 mismatch.

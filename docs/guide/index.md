@@ -1,8 +1,8 @@
 # tmux-config
 
 A personal tmux configuration: `Ctrl-Space` prefix, mouse-first everywhere
-(click to switch or focus, drag to copy), and a dark status bar at the top
-instead of the default green one at the bottom. Layout survives a terminal
+(click to switch or focus, drag to copy), and a dark Tokyo-Night status bar
+at the top instead of the default green one at the bottom. Layout survives a terminal
 crash or a reboot — `tmux-resurrect` and `tmux-continuum` autosave every 5
 minutes, and a small restore utility brings every saved session back,
 including each Claude Code pane's exact prior conversation rather than

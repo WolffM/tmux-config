@@ -11,6 +11,9 @@ features:
   - name: Directory-named tabs
     summary: 'Tabs are named after their working directory, not the command running in them.'
     anchor: directory-named-tabs
+  - name: Multiple sessions
+    summary: 'Split work into named sessions; switch, move a tab between them, or cycle with a keystroke.'
+    anchor: multiple-sessions
   - name: Session persistence
     summary: 'Layout autosaves every 5 minutes; restore is on demand, never automatic.'
     anchor: session-persistence
