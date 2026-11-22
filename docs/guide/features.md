@@ -87,6 +87,16 @@ last pane left.
 There is no remaining way to close a multi-pane tab in one step — closing it
 always means closing its panes one at a time.
 
+## No priority raising
+
+Nothing that runs inside tmux can raise its own CPU priority. The config
+caps the tmux server's nice limit at a floor of 0 the moment the server
+starts, and every pane and everything a pane launches inherits it. A
+browser an agent session opens therefore cannot put itself above the
+services running beside it, which Chrome otherwise does by default. Lowering
+a process's priority still works, and programs started outside tmux (audio,
+the desktop, games) keep the wider limit they need.
+
 ## Socket recovery
 
 `bin/tmux-socket-recover` brings a tmux server's socket back after its file
