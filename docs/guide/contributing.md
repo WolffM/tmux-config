@@ -16,7 +16,8 @@ config or script change. It:
    `~/.tmux/plugins/` if they are not already there.
 3. Symlinks every script in `bin/` into `~/.local/bin/` and the unit files in
    `systemd/` into `~/.config/systemd/user/`, then enables
-   `claude-tmux-restore.service` and `tmux-umask-check.timer`.
+   `claude-tmux-restore.service`. It also removes the
+   `tmux-umask-check` links an older install left behind.
 4. Reloads a running tmux server's config in place, if one is up.
 
 Wayland clipboard support needs `wl-clipboard` (`sudo apt install
@@ -50,8 +51,8 @@ or copied into a systemd unit's `ExecStart`.
   `systemd/claude-tmux-restore.service` (`After=plasma-workspace.target`,
   so it runs once at the end of graphical login, not at raw boot).
 - `bin/tmux-socket-recover` — independent of the restore path above; see
-  [features.md](features.md#socket-recovery). `systemd/tmux-umask-check.{service,timer}`
-  run its `--check` mode every 15 minutes. The bug it works around is in
+  [features.md](features.md#socket-recovery). Its `--check` mode runs every
+  15 minutes on hokon as the cron-manager's `ops:tmux-umask-check` job. The bug it works around is in
   tmux's own `server.c` (around lines 125-135 in the 3.5a/3.6b source): a
   `SIGUSR1` handler sets umask `0117` around its `bind()` call and, if that
   `bind()` fails (the socket directory is missing), returns without

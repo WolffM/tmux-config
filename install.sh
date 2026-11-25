@@ -38,17 +38,25 @@ ln -sfn "$here/bin/claude-session"                  "$HOME/.local/bin/claude-ses
 ln -sfn "$here/systemd/claude-tmux-restore.service" "$HOME/.config/systemd/user/claude-tmux-restore.service"
 echo "linked session-restore utility (bin + systemd unit)"
 #    - tmux-socket-recover : bring a lost socket back without tmux 3.5a's
-#      umask leak; --check (every 15 min, timer) warns if a server has it.
+#      umask leak; --check warns if a server has it. On hokon the check is
+#      scheduled by the host's cron-manager (ops:tmux-umask-check), which
+#      replaced the timer this repo used to ship.
 ln -sfn "$here/bin/tmux-socket-recover"             "$HOME/.local/bin/tmux-socket-recover"
-ln -sfn "$here/systemd/tmux-umask-check.service"    "$HOME/.config/systemd/user/tmux-umask-check.service"
-ln -sfn "$here/systemd/tmux-umask-check.timer"      "$HOME/.config/systemd/user/tmux-umask-check.timer"
-echo "linked tmux-socket-recover (bin + umask-check timer)"
+echo "linked tmux-socket-recover"
 if command -v systemctl >/dev/null; then
+  # An older install linked tmux-umask-check.{service,timer}; their targets
+  # are gone, so drop the dangling links and the enablement with them.
+  for unit in tmux-umask-check.timer tmux-umask-check.service; do
+    link="$HOME/.config/systemd/user/$unit"
+    if [ -L "$link" ] && [ ! -e "$link" ]; then
+      systemctl --user disable "$unit" >/dev/null 2>&1 || true
+      rm -f "$link"
+      echo "removed stale $unit"
+    fi
+  done
   systemctl --user daemon-reload
   systemctl --user enable claude-tmux-restore.service >/dev/null 2>&1 \
     && echo "enabled claude-tmux-restore.service (headless restore at login)"
-  systemctl --user enable --now tmux-umask-check.timer >/dev/null 2>&1 \
-    && echo "enabled tmux-umask-check.timer"
 fi
 
 # 4) reload if a server is running

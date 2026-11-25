@@ -108,9 +108,10 @@ for where that bug lives. It recreates the directory with mode 0700 first,
 signals the server only once the socket is actually confirmed gone, and
 then checks the resulting umask against `$TMUX_EXPECTED_UMASK` (default
 `0002`, systemd `--user`'s own), printing an in-place `gdb` fix if it is
-wrong. Run read-only with `--check`; a `tmux-umask-check.timer` user unit
-runs that check every 15 minutes and raises a desktop notification on a
-mismatch.
+wrong. Run read-only with `--check`, which exits 1 on a mismatch. On hokon,
+the host's cron-manager runs it every 15 minutes as
+`ops:tmux-umask-check`, so a mismatch is a failed job in the execution log
+rather than a desktop notification nobody on SSH would see.
 
 It never kills, restarts, or otherwise touches a server whose socket is
 already present and answering.
