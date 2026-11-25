@@ -43,6 +43,15 @@ echo "linked session-restore utility (bin + systemd unit)"
 #      replaced the timer this repo used to ship.
 ln -sfn "$here/bin/tmux-socket-recover"             "$HOME/.local/bin/tmux-socket-recover"
 echo "linked tmux-socket-recover"
+#    - memtriage : reclaim RAM from idle claude sessions by writing their scope's
+#      memory.reclaim, never by killing them. On hokon `park` is started by the
+#      host's cron-manager when the user manager's memory pressure rises
+#      (ops:memtriage-park). It used to be an untracked file in ~/.local/bin.
+if [ -e "$HOME/.local/bin/memtriage" ] && [ ! -L "$HOME/.local/bin/memtriage" ]; then
+  mv "$HOME/.local/bin/memtriage" "$HOME/.local/bin/memtriage.bak.$(date +%s)"
+fi
+ln -sfn "$here/bin/memtriage"                       "$HOME/.local/bin/memtriage"
+echo "linked memtriage"
 if command -v systemctl >/dev/null; then
   # An older install linked tmux-umask-check.{service,timer}; their targets
   # are gone, so drop the dangling links and the enablement with them.

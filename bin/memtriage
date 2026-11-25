@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+# memtriage -- reclaim RAM from idle claude sessions WITHOUT killing them.
+#
+# Mechanism: every claude runs in its own tmux-spawn-*.scope cgroup. Writing to that
+# scope's memory.reclaim pushes its cold anon pages to swap -- no sudo, no signal, no
+# lost session. The session faults back in by itself on your next turn.
+#
+# Idle is measured from the session's OWN transcript mtime, resolved via the pid->
+# sessionId registry (~/.claude/sessions/<pid>.json). Newest-file-in-cwd is wrong:
+# several sessions share a repo directory. The registry is mostly empty in practice
+# (2 of 32 sessions on 2026-10-27), so sid_for falls back to the session's open fd
+# under /tmp/claude-<uid>/<project>/<sessionId>/, then to `--resume <id>` in argv.
+set -uo pipefail
+
+REG="$HOME/.claude/sessions"
+# transcripts live under the active account dir, not just ~/.claude/projects
+PROJ=("$HOME/.claude/projects" "$HOME"/.claude-accounts/*/projects)
+h() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+mb() { echo $(( ${1:-0} / 1024 )); }
+
+# --- parent pid. /proc/<pid>/stat's 2nd field is the name in parens and may hold
+#     spaces ("(tmux: server)"), so the fields are counted after the LAST ')'. ---
+ppid_of() { local s; s=$(cat "/proc/$1/stat" 2>/dev/null) || return 1; s=${s##*) }; set -- $s; echo "$2"; }
+
+# --- pids we must never touch: our own ancestry + the tmux server ---
+protected_pids() {
+  local p=$$ ppid
+  while [ "$p" -gt 1 ]; do
+    echo "$p"
+    ppid=$(ppid_of "$p") || break
+    p=${ppid:-1}
+  done
+  tmux display-message -p '#{pid}' 2>/dev/null
+}
+
+# --- session id for a pid, from the registry ---
+sid_for() {
+  local sid
+  sid=$(grep -o '"sessionId"[[:space:]]*:[[:space:]]*"[^"]*"' "$REG/$1.json" 2>/dev/null | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+  [ -n "$sid" ] || sid=$(ls -l "/proc/$1/fd" 2>/dev/null | grep -oE "/tmp/claude-$(id -u)/[^/]+/[0-9a-f-]{36}" | head -1 | grep -oE '[0-9a-f-]{36}$')
+  [ -n "$sid" ] || sid=$(tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null | grep -oE -- '--resume [0-9a-f-]{36}' | cut -d' ' -f2)
+  echo "$sid"
+}
+
+# --- hours since that session's transcript was last written ---
+idle_h() {
+  local pid=$1 sid t m now
+  sid=$(sid_for "$pid"); [ -n "$sid" ] || { echo ""; return; }
+  t=$(find "${PROJ[@]}" -maxdepth 2 -name "$sid.jsonl" -print -quit 2>/dev/null)
+  [ -n "$t" ] || { echo ""; return; }
+  m=$(stat -c %Y "$t" 2>/dev/null); now=$(date +%s)
+  awk -v n="$now" -v m="$m" 'BEGIN{printf "%.1f", (n-m)/3600}'
+}
+
+cg_path() { local cg; cg=$(cut -d: -f3 "/proc/$1/cgroup" 2>/dev/null); [ -n "$cg" ] && echo "/sys/fs/cgroup$cg"; }
+claude_pids() { ps -eo pid,args --no-headers | awk '$2=="claude"||$2~/\/claude$/{print $1}'; }
+
+# --- list sessions with idle time + footprint ---
+cmd_list() {
+  local prot; prot=$(protected_pids)
+  h "CLAUDE SESSIONS (idle from own transcript; RSS is the RAM actually held)"
+  printf '  %-8s %8s %8s %8s  %-5s %s\n' PID IDLE_H RSS_M SWAP_M PROT CWD
+  for pid in $(claude_pids); do
+    [ -d "/proc/$pid" ] || continue
+    local r s i c p
+    r=$(mb "$(awk '/^VmRSS:/{print $2}' /proc/$pid/status 2>/dev/null)")
+    s=$(mb "$(awk '/^VmSwap:/{print $2}' /proc/$pid/status 2>/dev/null)")
+    i=$(idle_h "$pid"); c=$(readlink "/proc/$pid/cwd" 2>/dev/null)
+    p=""; grep -qx "$pid" <<<"$prot" && p="SELF"
+    printf '  %-8s %8s %8s %8s  %-5s %s\n' "$pid" "${i:-?}" "$r" "$s" "$p" "${c##*/}"
+  done | sort -k2 -rn
+}
+
+# --- the main event: park idle sessions ---
+cmd_park() {
+  local min_idle=12 dry=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --idle-h) min_idle=$2; shift 2 ;;
+      --dry-run|-n) dry=1; shift ;;
+      *) shift ;;
+    esac
+  done
+  local prot; prot=$(protected_pids)
+  local freed=0 n=0
+  h "PARKING claude sessions idle > ${min_idle}h $([ $dry -eq 1 ] && echo '(dry run)')"
+  printf '  %-8s %8s %10s %10s  %s\n' PID IDLE_H RSS_BEFORE RSS_AFTER CWD
+  for pid in $(claude_pids); do
+    [ -d "/proc/$pid" ] || continue
+    grep -qx "$pid" <<<"$prot" && continue           # never our own session / tmux
+    local i; i=$(idle_h "$pid"); [ -n "$i" ] || continue
+    awk -v a="$i" -v b="$min_idle" 'BEGIN{exit !(a>b)}' || continue
+    local f before after c
+    f=$(cg_path "$pid"); [ -n "$f" ] && [ -w "$f/memory.reclaim" ] || continue
+    case "$f" in *tmux-spawn-*) ;; *) continue ;; esac  # only per-session scopes
+    before=$(mb "$(awk '/^VmRSS:/{print $2}' /proc/$pid/status 2>/dev/null)")
+    c=$(readlink "/proc/$pid/cwd" 2>/dev/null)
+    if [ $dry -eq 1 ]; then
+      printf '  %-8s %8s %10s %10s  %s\n' "$pid" "$i" "${before}M" "-" "${c##*/}"
+      n=$((n+1)); continue
+    fi
+    # ask for slightly more than resident; partial reclaim returns 1 but still works,
+    # so judge by the delta, never the exit code.
+    echo "$(( (before + 32) * 1024 * 1024 ))" > "$f/memory.reclaim" 2>/dev/null
+    after=$(mb "$(awk '/^VmRSS:/{print $2}' /proc/$pid/status 2>/dev/null)")
+    [ -d "/proc/$pid" ] || { echo "  $pid vanished (was exiting)"; continue; }
+    printf '  %-8s %8s %10s %10s  %s\n' "$pid" "$i" "${before}M" "${after}M" "${c##*/}"
+    freed=$(( freed + before - after )); n=$((n+1))
+  done
+  echo
+  if [ $dry -eq 1 ]; then echo "  $n session(s) would be parked. drop --dry-run to do it."
+  else echo "  parked $n session(s), reclaimed ${freed}M of RAM. All still alive; they page back in on next use."; fi
+}
+
+# --- census: attribute every userspace process to an owning subsystem ---
+cmd_census() {
+  h "PROCESS CENSUS (userspace only; kernel threads excluded)"
+  local tot user kern
+  tot=$(ls -d /proc/[0-9]* 2>/dev/null | wc -l)
+  user=$(ps -eo pid --no-headers | while read -r i; do
+           [ -n "$(tr -d '\0' < /proc/$i/cmdline 2>/dev/null)" ] && echo x; done | wc -l)
+  kern=$((tot - user))
+  printf '  %s total = %s userspace + %s kernel threads\n\n' "$tot" "$user" "$kern"
+  declare -A PAR CMDS
+  while read -r pid ppid; do PAR[$pid]=$ppid; done < <(ps -eo pid,ppid --no-headers)
+  while IFS= read -r l; do l=${l#"${l%%[![:space:]]*}"}; CMDS[${l%% *}]=${l#* }; done \
+    < <(ps -eo pid,args --no-headers)
+  own() {
+    local p=$1 d=0 c
+    while [ -n "${PAR[$p]:-}" ] && [ "$p" -gt 1 ] && [ $d -lt 30 ]; do
+      c="${CMDS[$p]:-}"
+      case "$c" in
+        *actions-runner*|*Runner.Listener*|*Runner.Worker*) echo github-runners; return ;;
+        claude|claude\ *|*/claude|*/claude\ *) echo claude-sessions; return ;;
+        *invokeai*) echo invokeai; return ;;
+        *postgres*) echo postgres; return ;;
+        *dockerd*|*containerd*) echo docker; return ;;
+        *nginx*) echo nginx; return ;;
+        *chrome*|*chromium*) echo chrome; return ;;
+        *firefox*) echo firefox; return ;;
+        *Discord*) echo discord; return ;;
+        *steam*|*Steam*) echo steam; return ;;
+        *zeek*) echo zeek; return ;;
+        *suricata*) echo suricata; return ;;
+        *pm2*|*PM2*) echo pm2; return ;;
+        *[jJ][dD]ownloader*) echo jdownloader; return ;;
+        *tmux*) echo tmux-panes; return ;;
+        *plasmashell*|*kwin*|*plasma*) echo kde-desktop; return ;;
+      esac
+      p=${PAR[$p]}; d=$((d+1))
+    done
+    echo other/system
+  }
+  for pid in "${!PAR[@]}"; do
+    [ -n "$(tr -d '\0' < /proc/$pid/cmdline 2>/dev/null)" ] || continue
+    echo "$(own "$pid") $(awk '/^VmRSS:/{print $2}' /proc/$pid/status 2>/dev/null || echo 0)" \
+         "$(awk '/^VmSwap:/{print $2}' /proc/$pid/status 2>/dev/null || echo 0)"
+  done | awk '{n[$1]++; r[$1]+=$2; s[$1]+=$3}
+    END{printf "  %-17s %6s %9s %9s\n","OWNER","PROCS","RSS","SWAP";
+        for(k in n) printf "  %-17s %6d %8.1fG %8.1fG\n",k,n[k],r[k]/1048576,s[k]/1048576}' \
+    | { read -r hd; echo "$hd"; sort -k2 -rn; }
+}
+
+# --- strays: browser trees whose owner died, and their MCP parents ---
+cmd_strays() {
+  h "BROWSER TREES (playwright/patchright Chrome should not outlive its run)"
+  printf '  %-9s %-14s %6s %8s %8s %8s\n' ROOT OWNER PROCS RSS SWAP AGE_H
+  local orphan_roots=() tot_o=0
+  local pp; pp=$(ps -eo pid,ppid --no-headers)
+  for root in $(ps -eo pid,ppid,args --no-headers \
+      | grep -E '/chrome |/chrome$|chromium|patchright' \
+      | grep -v -- '--type=' | grep -v crashpad_handler | awk '{print $1}'); do
+    [ -d "/proc/$root" ] || continue
+    local ppid owner age n r sw
+    ppid=$(ppid_of "$root")
+    case "$(tr '\0' ' ' < /proc/${ppid}/cmdline 2>/dev/null)" in
+      *playwright*|*patchright*) owner="playwright-mcp" ;;
+      *) owner="ORPHAN" ;;
+    esac
+    n=0; r=0; sw=0
+    while read -r q; do
+      local a b
+      a=$(awk '/^VmRSS:/{print $2}' /proc/$q/status 2>/dev/null)
+      b=$(awk '/^VmSwap:/{print $2}' /proc/$q/status 2>/dev/null)
+      r=$((r+${a:-0})); sw=$((sw+${b:-0})); n=$((n+1))
+    done < <(awk -v r="$root" '{p[$1]=$2}
+             END{for(i in p){x=i;d=0;while(x>1&&d<25){if(x==r){print i;break};x=p[x];d++}}}' <<<"$pp"; echo "$root")
+    age=$(( $(ps -o etimes= -p "$root" 2>/dev/null | tr -d ' ') / 3600 ))
+    printf '  %-9s %-14s %6s %7sM %7sM %8s\n' "$root" "$owner" "$n" "$((r/1024))" "$((sw/1024))" "$age"
+    if [ "$owner" = "ORPHAN" ]; then orphan_roots+=("$root"); tot_o=$((tot_o + r/1024)); fi
+  done
+  echo
+  if [ ${#orphan_roots[@]} -gt 0 ]; then
+    echo "  ${#orphan_roots[@]} orphaned browser root(s): ${orphan_roots[*]}  (~${tot_o}M RSS)"
+    echo "  -> memtriage strays --kill   removes ONLY the orphans, never a live MCP's browser"
+  else
+    echo "  no orphaned browser trees."
+  fi
+  if [ "${1:-}" = "--kill" ] && [ ${#orphan_roots[@]} -gt 0 ]; then
+    for o in "${orphan_roots[@]}"; do
+      pkill -TERM -P "$o" 2>/dev/null; kill -TERM "$o" 2>/dev/null && echo "  TERM $o"
+    done
+  fi
+}
+
+cmd_report() {
+  h "MEMORY"; free -h | sed 's/^/  /'
+  h "PRESSURE (PSI: 'full avg60' > 10 means real stalling)"; sed 's/^/  /' /proc/pressure/memory
+  h "TOP RESIDENT -- the real RAM tenants"
+  ps -eo pid,rss,etimes,args --no-headers | sort -k2 -rn | head -8 | \
+    awk '{printf "  %8s rss=%6.1fG age=%4dh  %.62s\n",$1,$2/1048576,$3/3600,substr($0,index($0,$4))}'
+  h "CLAUDE FLEET TOTAL"
+  for pid in $(claude_pids); do awk '/^VmRSS:/{r=$2} /^VmSwap:/{s=$2} END{print r,s}' "/proc/$pid/status" 2>/dev/null; done \
+    | awk '{r+=$1;s+=$2;n++} END{printf "  %d sessions: %.1fG RSS, %.1fG swap\n",n,r/1048576,s/1048576}'
+}
+
+case "${1:-list}" in
+  list)   cmd_list ;;
+  census) cmd_census ;;
+  strays) shift; cmd_strays "${1:-}" ;;
+  park)   shift; cmd_park "$@" ;;
+  report) cmd_report ;;
+  all)    cmd_report; cmd_census; cmd_list ;;
+  *) cat <<'U'
+memtriage -- reclaim RAM from idle claude sessions without killing them
+
+  list                      every claude session: idle hours, RSS, swap
+  park [--idle-h N] [-n]    push idle sessions' pages out of RAM (default N=12)
+                            -n / --dry-run to preview
+  census                    every process attributed to an owning subsystem
+  strays [--kill]           orphaned browser trees left behind by dead runs
+  report                    where RAM actually went + fleet totals
+  all                       report + list
+
+park never signals anything. It writes the session's own cgroup memory.reclaim,
+so the process stays alive and pages back in on your next turn. Your current
+session and the tmux server are always excluded.
+U
+  ;;
+esac

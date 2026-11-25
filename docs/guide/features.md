@@ -116,6 +116,26 @@ rather than a desktop notification nobody on SSH would see.
 It never kills, restarts, or otherwise touches a server whose socket is
 already present and answering.
 
+## Memory triage
+
+`bin/memtriage` frees RAM held by idle Claude Code sessions without ending
+them. Each session runs in its own `tmux-spawn-*.scope` cgroup, so `park`
+writes that scope's `memory.reclaim` to push its cold pages out to swap. No
+signal is sent and nothing is lost: the session pages back in on its next
+turn. A session counts as idle by its own transcript's last write, found
+through Claude's session registry, so several sessions in one repository
+are told apart. The session that runs it, and the tmux server, are never
+touched. `--dry-run` previews a park. `list`, `report`, `census` and
+`strays` show where memory went, and `strays --kill` ends only browser
+trees whose owner has died.
+
+On hokon, `park --idle-h 0.5` is not on a clock. The host's cron-manager
+runs it as `ops:memtriage-park` when memory pressure on the user's session
+manager rises, which is the cgroup the out-of-memory daemon judges. So
+sessions are parked before that daemon would kill one.
+
+It does not reclaim memory from anything that is not a Claude session.
+
 ## Trivia
 
 The directory-rename feature exists because of one specific annoyance: every

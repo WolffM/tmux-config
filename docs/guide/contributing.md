@@ -59,6 +59,12 @@ or copied into a systemd unit's `ExecStart`.
   restoring it — so the server keeps umask `0117` for the rest of its
   life, and every directory a pane creates afterward has no execute bit,
   fixed upstream in 3.8.
+- `bin/memtriage` — also independent; see
+  [features.md](features.md#memory-triage). Every subcommand reads `/proc`
+  and the cgroup tree directly. `park` is the only one that writes, and it
+  writes only `memory.reclaim`. A process's parent comes from
+  `/proc/<pid>/stat` counted after the last `)`, because the name field can
+  hold spaces (`(tmux: server)`).
 
 ## Tests and gates
 
